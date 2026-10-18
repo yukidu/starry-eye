@@ -1,6 +1,6 @@
 import baseWorker from './youtubeLibraryRouter';
 import type { Env, LocalUser } from './types';
-import { currentUser } from './auth';
+import { currentUser, requestAppAccess } from './auth';
 import { cleanText, json } from './security';
 import { youtubeAccessToken, youtubeStudioReady } from './youtube';
 import { handleYoutubeStudio } from './youtubeStudio';
@@ -137,6 +137,16 @@ async function youtubeIntermediateStatus(env: Env, user: LocalUser): Promise<Res
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url);
+    if (url.pathname==='/' || url.pathname.startsWith('/api/')) {
+      let state: Awaited<ReturnType<typeof requestAppAccess>>;
+      try {state=await requestAppAccess(request,env);}
+      catch(error){console.error('Starry Eye entitlement lookup failed',error);return json({error:'會員權限驗證暫時無法使用'},503);}
+      if(state==='denied'){
+        if(url.pathname==='/') return new Response('<!doctype html><html lang="zh-Hant"><meta charset="utf-8"><meta name="viewport" content="width=device-width"><main style="margin:15vh auto;max-width:440px;padding:20px;text-align:center;font-family:system-ui"><h1>您沒有使用權限</h1><p>請聯絡繁星管理員。</p><a href="https://id.starry.phd/">前往 Starry ID</a></main></html>',{status:403,headers:{'Content-Type':'text/html; charset=utf-8','Cache-Control':'no-store'}});
+        return json({error:'您沒有使用權限',code:'APP_ACCESS_DENIED'},403);
+      }
+      if(state==='needs_login')return json({error:'請重新登入 Starry ID',code:'CENTRAL_LOGIN_REQUIRED'},401);
+    }
     if (url.pathname.startsWith('/api/youtube/studio/')) {
       const user = await currentUser(request, env);
       if (!user) return json({ error: '請先登入 Starry ID' }, 401);
