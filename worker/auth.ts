@@ -126,6 +126,24 @@ export async function currentUser(request: Request, env: Env): Promise<LocalUser
   return entitlement.allowed ? user : null;
 }
 
+
+/** One central lookup for the entrypoint; public visitors make no D1 call. */
+export async function requestAppAccess(request: Request, env: Env): Promise<'visitor'|'allowed'|'denied'|'needs_login'> {
+  const token=parseCookies(request.headers.get('cookie')).box_starry_session||'';
+  if(!token)return 'visitor';
+  const hash=await sha256(token);
+  const mapped=await env.DB.prepare(`SELECT i.starry_user_id
+    FROM sessions s
+    JOIN users u ON u.id=s.user_id AND u.status='active'
+    LEFT JOIN starry_identities i ON i.local_user_id=u.id
+    WHERE s.token_hash=? AND s.expires_at > datetime('now') LIMIT 1`)
+    .bind(hash).first<{starry_user_id:string|null}>();
+  if(!mapped)return 'visitor';
+  if(!mapped.starry_user_id)return 'needs_login';
+  const state=await checkCentralAppEntitlement(env.STARRY_ID_DB,mapped.starry_user_id,APP_ID);
+  return state.allowed?'allowed':'denied';
+}
+
 export async function logout(request: Request, env: Env): Promise<Response> {
   const token = parseCookies(request.headers.get('cookie')).box_starry_session || '';
   if (token) await env.DB.prepare('DELETE FROM sessions WHERE token_hash=?').bind(await sha256(token)).run();
